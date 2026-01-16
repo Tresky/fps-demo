@@ -39,6 +39,7 @@ let pitch = 0;
 // Physics
 let playerVelocity = new THREE.Vector3();
 let isOnGround = false;
+let canDoubleJump = false;
 
 // Arrays
 const enemies = [];
@@ -497,10 +498,17 @@ function updatePlayer(delta) {
     playerVelocity.z *= 0.8;
   }
 
-  // Jump
-  if (keys.space && isOnGround) {
-    playerVelocity.y = JUMP_FORCE;
-    isOnGround = false;
+  // Jump (with double jump)
+  if (keys.space) {
+    if (isOnGround) {
+      playerVelocity.y = JUMP_FORCE;
+      isOnGround = false;
+      canDoubleJump = true;
+    } else if (canDoubleJump) {
+      playerVelocity.y = JUMP_FORCE;
+      canDoubleJump = false;
+    }
+    keys.space = false; // Consume the input to prevent held-space issues
   }
 
   // Gravity
@@ -698,6 +706,7 @@ function restartGame() {
   playerVelocity.set(0, 0, 0);
   yaw = 0;
   pitch = 0;
+  canDoubleJump = false;
   
   updateHealthDisplay();
   updateAmmoDisplay();
