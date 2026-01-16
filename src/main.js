@@ -1103,17 +1103,6 @@ document.addEventListener('keydown', (e) => {
     showDebug = !showDebug;
     document.getElementById('debug-menu').style.display = showDebug ? 'block' : 'none';
   }
-  
-  // Pause game
-  if (e.code === 'Escape') {
-    if (gameStarted && !gameOver) {
-      isPaused = !isPaused;
-      document.getElementById('pause-menu').style.display = isPaused ? 'flex' : 'none';
-      if (isPaused) {
-        document.exitPointerLock();
-      }
-    }
-  }
 });
 
 document.addEventListener('keyup', (e) => {
@@ -1176,6 +1165,11 @@ document.addEventListener('pointerlockchange', () => {
   if (!mouse.locked) {
     mouse.leftDown = false;
     mouse.rightDown = false;
+    // Auto-pause when pointer lock is lost (e.g., pressing Escape)
+    if (gameStarted && !gameOver && !isPaused) {
+      isPaused = true;
+      document.getElementById('pause-menu').style.display = 'flex';
+    }
   }
 });
 
