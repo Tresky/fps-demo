@@ -106,7 +106,8 @@ function addCollider(minX, minY, minZ, maxX, maxY, maxZ, isGround = false, isRam
 }
 
 // Get ground height at a position (for ramps)
-function getGroundHeight(x, z) {
+// currentY: the entity's current Y position - only consider surfaces below or near this height
+function getGroundHeight(x, z, currentY = 999) {
   let maxHeight = 0;
   
   for (const col of colliders) {
@@ -117,9 +118,15 @@ function getGroundHeight(x, z) {
         const rd = col.rampData;
         const progress = (z - rd.minZ) / (rd.maxZ - rd.minZ);
         const height = rd.minY + progress * (rd.maxY - rd.minY);
-        if (height > maxHeight) maxHeight = height;
+        // Only count if this surface is below or near the entity (within step-up range)
+        if (height > maxHeight && height <= currentY + 1) {
+          maxHeight = height;
+        }
       } else if (col.isGround || !col.isRamp) {
-        if (col.max.y > maxHeight) maxHeight = col.max.y;
+        // Only count platforms that are below or near the entity
+        if (col.max.y > maxHeight && col.max.y <= currentY + 1) {
+          maxHeight = col.max.y;
+        }
       }
     }
   }
@@ -361,26 +368,29 @@ class Enemy {
     this.mesh.position.y += this.velocity.y * delta;
 
     // Ground collision for enemies (including ramps)
+    // Enemy capsule: radius 0.5, segment 1, so total height ~2, feet at mesh.y - 1
     this.isOnGround = false;
     const enemyFeet = this.mesh.position.y - 1;
-    const groundHeight = getGroundHeight(this.mesh.position.x, this.mesh.position.z);
+    // Pass current feet position to avoid teleporting onto platforms above
+    const groundHeight = getGroundHeight(this.mesh.position.x, this.mesh.position.z, enemyFeet);
     
     // Snap to ground/ramp if close enough and falling
     if (enemyFeet <= groundHeight + 0.3 && this.velocity.y <= 0) {
-      this.mesh.position.y = groundHeight + 1;
+      this.mesh.position.y = groundHeight + 1.5; // Offset so feet touch ground, not center
       this.velocity.y = 0;
       this.isOnGround = true;
     }
 
     // Minimum height
-    if (this.mesh.position.y < 1) {
-      this.mesh.position.y = 1;
+    if (this.mesh.position.y < 1.5) {
+      this.mesh.position.y = 1.5;
       this.velocity.y = 0;
       this.isOnGround = true;
     }
 
-    // Attack player if close AND has line of sight
-    if (distance < 2.5 && Date.now() - this.lastAttackTime > 1000) {
+    // Attack player if close AND has line of sight AND similar height
+    const yDiff = Math.abs(playerPos.y - this.mesh.position.y);
+    if (distance < 2.5 && yDiff < 2.5 && Date.now() - this.lastAttackTime > 1000) {
       // Check line of sight before attacking
       if (this.hasLineOfSight(playerPos)) {
         this.lastAttackTime = Date.now();
@@ -778,8 +788,8 @@ function updatePlayer(delta) {
   }
 
   // Check ground height (for ramps)
-  const groundHeight = getGroundHeight(camera.position.x, camera.position.z);
   const playerFeet = camera.position.y - PLAYER_HEIGHT;
+  const groundHeight = getGroundHeight(camera.position.x, camera.position.z, playerFeet);
   
   // If we're on or near the ground/ramp surface, snap to it
   if (playerFeet <= groundHeight + 0.5 && playerVelocity.y <= 0) {
@@ -793,8 +803,9 @@ function updatePlayer(delta) {
     if (!colY) {
       camera.position.y = newY;
       // Check if we've landed on something
-      const newGroundHeight = getGroundHeight(camera.position.x, camera.position.z);
-      if (camera.position.y - PLAYER_HEIGHT <= newGroundHeight) {
+      const newPlayerFeet = camera.position.y - PLAYER_HEIGHT;
+      const newGroundHeight = getGroundHeight(camera.position.x, camera.position.z, newPlayerFeet);
+      if (newPlayerFeet <= newGroundHeight + 0.1) {
         camera.position.y = newGroundHeight + PLAYER_HEIGHT;
         playerVelocity.y = 0;
         isOnGround = true;
