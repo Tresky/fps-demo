@@ -332,60 +332,63 @@ class Enemy {
       this.velocity.z *= 0.8;
     }
 
-    // Jump if player is above or blocked by obstacle - more aggressive climbing
+    // Check if blocked ahead (for wall climbing)
+    const aheadX = this.mesh.position.x + dir.x * 1.0;
+    const aheadZ = this.mesh.position.z + dir.z * 1.0;
+    const blockedAhead = this.checkEnemyCollision(aheadX, this.mesh.position.y - 0.5, aheadZ);
+    
+    // Wall climbing: if blocked in forward direction, climb up instead
+    let isClimbing = false;
+    if (blockedAhead && distance > 2) {
+      // Check if the wall is roughly in our movement direction (within ~30 degrees)
+      // We're blocked, so climb up at 75% walk speed
+      isClimbing = true;
+      this.velocity.y = ENEMY_SPEED * 0.75;
+    }
+
+    // Normal jumping (occasional, when player is way above)
     this.jumpCooldown -= delta;
-    if (this.isOnGround && this.jumpCooldown <= 0) {
-      // Check if there's an obstacle ahead
-      const aheadX = this.mesh.position.x + dir.x * 1.5;
-      const aheadZ = this.mesh.position.z + dir.z * 1.5;
-      const blocked = this.checkEnemyCollision(aheadX, this.mesh.position.y - 1, aheadZ);
-      
-      // Jump more aggressively when player is above or path is blocked
-      const shouldJump = playerPos.y > this.mesh.position.y + 1.5 || blocked || Math.random() < 0.02;
-      if (shouldJump) {
-        // Jump higher when trying to reach elevated player
-        const jumpMultiplier = playerPos.y > this.mesh.position.y + 3 ? 1.3 : 1;
-        this.velocity.y = ENEMY_JUMP_FORCE * jumpMultiplier;
+    if (this.isOnGround && this.jumpCooldown <= 0 && !isClimbing) {
+      // Only jump occasionally or when player is significantly above
+      if (playerPos.y > this.mesh.position.y + 4 || Math.random() < 0.01) {
+        this.velocity.y = ENEMY_JUMP_FORCE;
         this.isOnGround = false;
-        this.jumpCooldown = blocked ? 0.5 : 1.0; // Jump more frequently when blocked
+        this.jumpCooldown = 2.0;
       }
     }
 
-    // Gravity
-    this.velocity.y -= GRAVITY * delta;
+    // Gravity (reduced when climbing)
+    if (isClimbing) {
+      this.velocity.y -= GRAVITY * delta * 0.3; // Less gravity while climbing
+    } else {
+      this.velocity.y -= GRAVITY * delta;
+    }
 
     // Try to move X with collision
     const newX = this.mesh.position.x + this.velocity.x * delta;
-    const blockedX = this.checkEnemyCollision(newX, this.mesh.position.y - 1, this.mesh.position.z);
+    const blockedX = this.checkEnemyCollision(newX, this.mesh.position.y - 0.5, this.mesh.position.z);
     if (!blockedX) {
       this.mesh.position.x = newX;
     } else {
       this.velocity.x = 0;
-      // Trigger jump attempt when blocked horizontally
-      if (this.isOnGround && this.jumpCooldown <= 0) {
-        this.velocity.y = ENEMY_JUMP_FORCE;
-        this.isOnGround = false;
-        this.jumpCooldown = 0.5;
-      }
     }
 
     // Try to move Z with collision
     const newZ = this.mesh.position.z + this.velocity.z * delta;
-    const blockedZ = this.checkEnemyCollision(this.mesh.position.x, this.mesh.position.y - 1, newZ);
+    const blockedZ = this.checkEnemyCollision(this.mesh.position.x, this.mesh.position.y - 0.5, newZ);
     if (!blockedZ) {
       this.mesh.position.z = newZ;
     } else {
       this.velocity.z = 0;
-      // Trigger jump attempt when blocked horizontally
-      if (this.isOnGround && this.jumpCooldown <= 0) {
-        this.velocity.y = ENEMY_JUMP_FORCE;
-        this.isOnGround = false;
-        this.jumpCooldown = 0.5;
-      }
     }
 
     // Move Y
     this.mesh.position.y += this.velocity.y * delta;
+    
+    // Clamp climbing velocity to prevent flying
+    if (isClimbing && this.velocity.y > ENEMY_SPEED) {
+      this.velocity.y = ENEMY_SPEED;
+    }
 
     // Ground collision for enemies (including ramps)
     // Enemy capsule: radius 0.5, segment 1, so total height ~2, feet at mesh.y - 1
@@ -406,6 +409,24 @@ class Enemy {
       this.mesh.position.y = 1.5;
       this.velocity.y = 0;
       this.isOnGround = true;
+    }
+    
+    // Unstick check: if enemy is inside an obstacle, push them out
+    const stuckIn = this.checkEnemyCollision(this.mesh.position.x, this.mesh.position.y - 1, this.mesh.position.z);
+    if (stuckIn) {
+      // Push toward player (away from obstacle center)
+      const obstacleCenter = new THREE.Vector3(
+        (stuckIn.min.x + stuckIn.max.x) / 2,
+        0,
+        (stuckIn.min.z + stuckIn.max.z) / 2
+      );
+      const pushDir = new THREE.Vector3().subVectors(this.mesh.position, obstacleCenter);
+      pushDir.y = 0;
+      if (pushDir.length() > 0.01) {
+        pushDir.normalize();
+        this.mesh.position.x += pushDir.x * 0.5;
+        this.mesh.position.z += pushDir.z * 0.5;
+      }
     }
 
     // Attack player if close AND has line of sight AND similar height
