@@ -964,7 +964,7 @@ function updateEnemies(delta) {
   }
 
   // Enemy-enemy collision separation
-  const separationDist = 1.5; // Minimum distance between enemies
+  const separationDist = 1.0; // Minimum distance between enemies
   for (let i = 0; i < enemies.length; i++) {
     if (enemies[i].health <= 0) continue;
     for (let j = i + 1; j < enemies.length; j++) {
