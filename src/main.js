@@ -789,14 +789,30 @@ function updatePlayer(delta) {
       if (pickup.userData.type === 'health') {
         health = Math.min(MAX_HEALTH, health + 25);
         updateHealthDisplay();
+        showPickupText('+25 HEALTH', 'health');
       } else {
         reserveAmmo = Math.min(MAX_RESERVE, reserveAmmo + 15);
         updateAmmoDisplay();
+        showPickupText('+15 AMMO', 'ammo');
       }
       scene.remove(pickup);
       pickups.splice(i, 1);
     }
   }
+}
+
+// Show pickup notification text
+function showPickupText(text, type) {
+  const container = document.getElementById('pickup-notifications');
+  const div = document.createElement('div');
+  div.className = `pickup-text ${type}`;
+  div.textContent = text;
+  container.appendChild(div);
+  
+  // Remove after animation completes
+  setTimeout(() => {
+    div.remove();
+  }, 1500);
 }
 
 // Update functions
