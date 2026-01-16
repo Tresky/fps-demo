@@ -229,6 +229,48 @@
         transform: translateY(-30px);
       }
     }
+    
+    #debug-menu {
+      position: absolute;
+      top: 60px;
+      left: 20px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 15px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: monospace;
+      line-height: 1.4;
+      display: none;
+      max-height: 70%;
+      overflow-y: auto;
+    }
+    
+    #pause-menu {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      pointer-events: auto;
+    }
+    
+    #pause-menu h2 {
+      font-size: 48px;
+      color: #ffcc00;
+      margin-bottom: 20px;
+      text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
+    }
+    
+    #pause-menu p {
+      font-size: 20px;
+      color: #ccc;
+      margin: 10px 0;
+    }
   </style>
 </head>
 <body>
@@ -245,6 +287,12 @@
       <div id="reload-indicator">RELOADING...</div>
       <div id="message"></div>
       <div id="damage-overlay"></div>
+      <div id="debug-menu"></div>
+      <div id="pause-menu">
+        <h2>PAUSED</h2>
+        <p>Click to Resume</p>
+        <p>ESC to toggle pause</p>
+      </div>
       <div id="start-screen">
         <h1>FPS DEMO</h1>
         <p>WASD - Move</p>
@@ -253,6 +301,8 @@
         <p>LEFT CLICK - Shoot (Hold to spray)</p>
         <p>RIGHT CLICK - Rocket Launcher</p>
         <p>R - Reload</p>
+        <p>ESC - Pause</p>
+        <p>P - Debug Menu</p>
         <p class="click-to-start">Click to Start</p>
       </div>
     </div>

@@ -31,6 +31,8 @@ let isReloading = false;
 let lastFireTime = 0;
 let gameStarted = false;
 let gameOver = false;
+let isPaused = false;
+let showDebug = false;
 
 // Input state
 const keys = { w: false, a: false, s: false, d: false, space: false, r: false };
@@ -330,7 +332,7 @@ class Enemy {
       this.velocity.z *= 0.8;
     }
 
-    // Jump if player is above or blocked by obstacle
+    // Jump if player is above or blocked by obstacle - more aggressive climbing
     this.jumpCooldown -= delta;
     if (this.isOnGround && this.jumpCooldown <= 0) {
       // Check if there's an obstacle ahead
@@ -338,10 +340,14 @@ class Enemy {
       const aheadZ = this.mesh.position.z + dir.z * 1.5;
       const blocked = this.checkEnemyCollision(aheadX, this.mesh.position.y - 1, aheadZ);
       
-      if (playerPos.y > this.mesh.position.y + 2 || blocked || Math.random() < 0.01) {
-        this.velocity.y = ENEMY_JUMP_FORCE;
+      // Jump more aggressively when player is above or path is blocked
+      const shouldJump = playerPos.y > this.mesh.position.y + 1.5 || blocked || Math.random() < 0.02;
+      if (shouldJump) {
+        // Jump higher when trying to reach elevated player
+        const jumpMultiplier = playerPos.y > this.mesh.position.y + 3 ? 1.3 : 1;
+        this.velocity.y = ENEMY_JUMP_FORCE * jumpMultiplier;
         this.isOnGround = false;
-        this.jumpCooldown = 1.5;
+        this.jumpCooldown = blocked ? 0.5 : 1.0; // Jump more frequently when blocked
       }
     }
 
@@ -350,18 +356,32 @@ class Enemy {
 
     // Try to move X with collision
     const newX = this.mesh.position.x + this.velocity.x * delta;
-    if (!this.checkEnemyCollision(newX, this.mesh.position.y - 1, this.mesh.position.z)) {
+    const blockedX = this.checkEnemyCollision(newX, this.mesh.position.y - 1, this.mesh.position.z);
+    if (!blockedX) {
       this.mesh.position.x = newX;
     } else {
       this.velocity.x = 0;
+      // Trigger jump attempt when blocked horizontally
+      if (this.isOnGround && this.jumpCooldown <= 0) {
+        this.velocity.y = ENEMY_JUMP_FORCE;
+        this.isOnGround = false;
+        this.jumpCooldown = 0.5;
+      }
     }
 
     // Try to move Z with collision
     const newZ = this.mesh.position.z + this.velocity.z * delta;
-    if (!this.checkEnemyCollision(this.mesh.position.x, this.mesh.position.y - 1, newZ)) {
+    const blockedZ = this.checkEnemyCollision(this.mesh.position.x, this.mesh.position.y - 1, newZ);
+    if (!blockedZ) {
       this.mesh.position.z = newZ;
     } else {
       this.velocity.z = 0;
+      // Trigger jump attempt when blocked horizontally
+      if (this.isOnGround && this.jumpCooldown <= 0) {
+        this.velocity.y = ENEMY_JUMP_FORCE;
+        this.isOnGround = false;
+        this.jumpCooldown = 0.5;
+      }
     }
 
     // Move Y
@@ -922,6 +942,32 @@ function updateEnemies(delta) {
     }
   }
 
+  // Enemy-enemy collision separation
+  const separationDist = 1.5; // Minimum distance between enemies
+  for (let i = 0; i < enemies.length; i++) {
+    if (enemies[i].health <= 0) continue;
+    for (let j = i + 1; j < enemies.length; j++) {
+      if (enemies[j].health <= 0) continue;
+      
+      const posA = enemies[i].mesh.position;
+      const posB = enemies[j].mesh.position;
+      const dx = posB.x - posA.x;
+      const dz = posB.z - posA.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      
+      if (dist < separationDist && dist > 0.01) {
+        // Push apart
+        const overlap = (separationDist - dist) / 2;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        posA.x -= nx * overlap;
+        posA.z -= nz * overlap;
+        posB.x += nx * overlap;
+        posB.z += nz * overlap;
+      }
+    }
+  }
+
   // Next wave
   if (allDead && enemies.length > 0) {
     wave++;
@@ -1030,6 +1076,23 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyD') keys.d = true;
   if (e.code === 'Space') { keys.space = true; e.preventDefault(); }
   if (e.code === 'KeyR') keys.r = true;
+  
+  // Toggle debug menu
+  if (e.code === 'KeyP') {
+    showDebug = !showDebug;
+    document.getElementById('debug-menu').style.display = showDebug ? 'block' : 'none';
+  }
+  
+  // Pause game
+  if (e.code === 'Escape') {
+    if (gameStarted && !gameOver) {
+      isPaused = !isPaused;
+      document.getElementById('pause-menu').style.display = isPaused ? 'flex' : 'none';
+      if (isPaused) {
+        document.exitPointerLock();
+      }
+    }
+  }
 });
 
 document.addEventListener('keyup', (e) => {
@@ -1060,11 +1123,19 @@ document.addEventListener('mousedown', (e) => {
     } else if (gameOver) {
       restartGame();
       document.body.requestPointerLock();
+    } else if (isPaused) {
+      // Resume from pause
+      isPaused = false;
+      document.getElementById('pause-menu').style.display = 'none';
+      document.body.requestPointerLock();
+    } else if (!mouse.locked) {
+      // Click to re-enter game when mouse not locked
+      document.body.requestPointerLock();
     }
   }
   if (e.button === 2) {
     mouse.rightDown = true;
-    if (gameStarted && !gameOver && mouse.locked) {
+    if (gameStarted && !gameOver && !isPaused && mouse.locked) {
       fireRocket();
     }
   }
@@ -1103,6 +1174,26 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// Update debug display
+function updateDebugDisplay() {
+  if (!showDebug) return;
+  
+  const debugEl = document.getElementById('debug-menu');
+  const aliveEnemies = enemies.filter(e => e.health > 0);
+  
+  let html = `<strong>DEBUG</strong><br>`;
+  html += `Enemies: ${aliveEnemies.length}<br>`;
+  html += `Player: ${Math.round(camera.position.x)}, ${Math.round(camera.position.y)}, ${Math.round(camera.position.z)}<br>`;
+  html += `<br><strong>Enemy Positions:</strong><br>`;
+  
+  aliveEnemies.forEach((enemy, i) => {
+    const pos = enemy.mesh.position;
+    html += `${i + 1}: ${Math.round(pos.x)}, ${Math.round(pos.y)}, ${Math.round(pos.z)}<br>`;
+  });
+  
+  debugEl.innerHTML = html;
+}
+
 // Game loop
 const clock = new THREE.Clock();
 
@@ -1111,7 +1202,7 @@ function animate() {
   
   const delta = Math.min(clock.getDelta(), 0.1);
   
-  if (gameStarted && !gameOver) {
+  if (gameStarted && !gameOver && !isPaused) {
     // Handle held left click for continuous shooting
     if (mouse.leftDown && mouse.locked) {
       shoot();
@@ -1124,6 +1215,11 @@ function animate() {
     updateRockets(delta);
     updateExplosions(delta);
     updatePickups(delta);
+  }
+  
+  // Always update debug display if visible
+  if (showDebug) {
+    updateDebugDisplay();
   }
   
   renderer.render(scene, camera);
