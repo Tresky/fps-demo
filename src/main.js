@@ -95,12 +95,36 @@ const healthPickupMaterial = new THREE.MeshStandardMaterial({ color: 0x33cc33, e
 const ammoPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xcccc33, emissive: 0x555511 });
 
 // Collider helper - stores AABB for collision
-function addCollider(minX, minY, minZ, maxX, maxY, maxZ, isGround = false) {
+function addCollider(minX, minY, minZ, maxX, maxY, maxZ, isGround = false, isRamp = false, rampData = null) {
   colliders.push({
     min: new THREE.Vector3(minX, minY, minZ),
     max: new THREE.Vector3(maxX, maxY, maxZ),
-    isGround
+    isGround,
+    isRamp,
+    rampData // { x, z, baseY, topY, depth, angle } for calculating height at position
   });
+}
+
+// Get ground height at a position (for ramps)
+function getGroundHeight(x, z) {
+  let maxHeight = 0;
+  
+  for (const col of colliders) {
+    // Check if position is within X/Z bounds
+    if (x >= col.min.x && x <= col.max.x && z >= col.min.z && z <= col.max.z) {
+      if (col.isRamp && col.rampData) {
+        // Calculate height on ramp based on Z position
+        const rd = col.rampData;
+        const progress = (z - rd.minZ) / (rd.maxZ - rd.minZ);
+        const height = rd.minY + progress * (rd.maxY - rd.minY);
+        if (height > maxHeight) maxHeight = height;
+      } else if (col.isGround || !col.isRamp) {
+        if (col.max.y > maxHeight) maxHeight = col.max.y;
+      }
+    }
+  }
+  
+  return maxHeight;
 }
 
 // Create environment
@@ -170,8 +194,23 @@ function createRamp(x, y, z, width, height, depth, angle) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
-  // Simplified ramp collider (treat as box for now)
-  addCollider(x - width/2, y, z - depth/2, x + width/2, y + height, z + depth/2);
+  
+  // Calculate ramp height at each end based on angle
+  // Positive angle: higher at -Z end, lower at +Z end
+  // The ramp rises by tan(angle) * depth
+  const rise = Math.tan(Math.abs(angle)) * depth;
+  const minY = y;
+  const maxY = y + rise;
+  
+  // Ramp data for ground height calculation
+  const rampData = {
+    minZ: z - depth/2,
+    maxZ: z + depth/2,
+    minY: angle > 0 ? maxY : minY, // height at minZ
+    maxY: angle > 0 ? minY : maxY  // height at maxZ
+  };
+  
+  addCollider(x - width/2, y, z - depth/2, x + width/2, y + rise + 0.5, z + depth/2, false, true, rampData);
 }
 
 function createWall(x, y, z, width, height, depth) {
@@ -197,11 +236,15 @@ function createCover(x, y, z, width, height, depth) {
 }
 
 // Collision detection - check if player cylinder collides with AABB
-function checkCollision(posX, posY, posZ) {
+// skipRamps: if true, don't count ramps as blocking (we handle them with ground height)
+function checkCollision(posX, posY, posZ, skipRamps = false) {
   const playerMin = new THREE.Vector3(posX - PLAYER_RADIUS, posY, posZ - PLAYER_RADIUS);
   const playerMax = new THREE.Vector3(posX + PLAYER_RADIUS, posY + PLAYER_HEIGHT, posZ + PLAYER_RADIUS);
   
   for (const col of colliders) {
+    // Skip ramps for horizontal collision - we'll use ground height instead
+    if (skipRamps && col.isRamp) continue;
+    
     if (playerMin.x < col.max.x && playerMax.x > col.min.x &&
         playerMin.y < col.max.y && playerMax.y > col.min.y &&
         playerMin.z < col.max.z && playerMax.z > col.min.z) {
@@ -670,37 +713,57 @@ function updatePlayer(delta) {
   // Gravity
   playerVelocity.y -= GRAVITY * delta;
 
-  // Try to move X
+  // Try to move X (skip ramps in collision check)
   const newX = camera.position.x + playerVelocity.x * delta;
-  if (!checkCollision(newX, camera.position.y, camera.position.z)) {
+  if (!checkCollision(newX, camera.position.y, camera.position.z, true)) {
     camera.position.x = newX;
   } else {
     playerVelocity.x = 0;
   }
 
-  // Try to move Z
+  // Try to move Z (skip ramps in collision check)
   const newZ = camera.position.z + playerVelocity.z * delta;
-  if (!checkCollision(camera.position.x, camera.position.y, newZ)) {
+  if (!checkCollision(camera.position.x, camera.position.y, newZ, true)) {
     camera.position.z = newZ;
   } else {
     playerVelocity.z = 0;
   }
 
-  // Try to move Y
-  const newY = camera.position.y + playerVelocity.y * delta;
-  const colY = checkCollision(camera.position.x, newY, camera.position.z);
-  if (!colY) {
-    camera.position.y = newY;
-  } else {
-    // Landing on top of something
-    if (playerVelocity.y < 0) {
-      camera.position.y = colY.max.y;
-      isOnGround = true;
-    }
+  // Check ground height (for ramps)
+  const groundHeight = getGroundHeight(camera.position.x, camera.position.z);
+  const playerFeet = camera.position.y - PLAYER_HEIGHT;
+  
+  // If we're on or near the ground/ramp surface, snap to it
+  if (playerFeet <= groundHeight + 0.5 && playerVelocity.y <= 0) {
+    camera.position.y = groundHeight + PLAYER_HEIGHT;
     playerVelocity.y = 0;
+    isOnGround = true;
+  } else {
+    // Try to move Y (in air)
+    const newY = camera.position.y + playerVelocity.y * delta;
+    const colY = checkCollision(camera.position.x, newY, camera.position.z, true);
+    if (!colY) {
+      camera.position.y = newY;
+      // Check if we've landed on something
+      const newGroundHeight = getGroundHeight(camera.position.x, camera.position.z);
+      if (camera.position.y - PLAYER_HEIGHT <= newGroundHeight) {
+        camera.position.y = newGroundHeight + PLAYER_HEIGHT;
+        playerVelocity.y = 0;
+        isOnGround = true;
+      } else {
+        isOnGround = false;
+      }
+    } else {
+      // Hit ceiling or landed on platform
+      if (playerVelocity.y < 0) {
+        camera.position.y = colY.max.y + PLAYER_HEIGHT;
+        isOnGround = true;
+      }
+      playerVelocity.y = 0;
+    }
   }
 
-  // Minimum height (standing on ground)
+  // Minimum height (standing on ground level 0)
   if (camera.position.y < PLAYER_HEIGHT) {
     camera.position.y = PLAYER_HEIGHT;
     playerVelocity.y = 0;
