@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // Game constants
 const PLAYER_SPEED = 15;
-const JUMP_FORCE = 12;
+const JUMP_FORCE = 15;
 const GRAVITY = 30;
 const MOUSE_SENSITIVITY = 0.002;
 const MAX_HEALTH = 100;
