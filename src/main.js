@@ -290,6 +290,7 @@ class Enemy {
     
     for (const col of colliders) {
       if (col.isGround) continue; // Skip ground for horizontal collision
+      if (col.isRamp) continue; // Skip ramps - handled by ground height
       if (eMin.x < col.max.x && eMax.x > col.min.x &&
           eMin.y < col.max.y && eMax.y > col.min.y &&
           eMin.z < col.max.z && eMax.z > col.min.z) {
