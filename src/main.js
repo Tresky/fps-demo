@@ -14,6 +14,8 @@ const DAMAGE_PER_SHOT = 25;
 const ENEMY_DAMAGE = 10;
 const ENEMY_SPEED = 8;
 const ENEMY_JUMP_FORCE = 10;
+const PLAYER_RADIUS = 0.5;
+const PLAYER_HEIGHT = 1.8;
 
 // Game state
 let health = MAX_HEALTH;
@@ -28,7 +30,11 @@ let gameOver = false;
 
 // Input state
 const keys = { w: false, a: false, s: false, d: false, space: false, r: false };
-const mouse = { x: 0, y: 0, locked: false };
+const mouse = { locked: false };
+
+// Camera control - separate yaw and pitch to prevent roll
+let yaw = 0;
+let pitch = 0;
 
 // Physics
 let playerVelocity = new THREE.Vector3();
@@ -39,7 +45,7 @@ const enemies = [];
 const bullets = [];
 const bloodParticles = [];
 const pickups = [];
-const platforms = [];
+const colliders = []; // Simplified collision boxes
 
 // Three.js setup
 const scene = new THREE.Scene();
@@ -80,6 +86,15 @@ const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xcc3333, roughnes
 const healthPickupMaterial = new THREE.MeshStandardMaterial({ color: 0x33cc33, emissive: 0x115511 });
 const ammoPickupMaterial = new THREE.MeshStandardMaterial({ color: 0xcccc33, emissive: 0x555511 });
 
+// Collider helper - stores AABB for collision
+function addCollider(minX, minY, minZ, maxX, maxY, maxZ, isGround = false) {
+  colliders.push({
+    min: new THREE.Vector3(minX, minY, minZ),
+    max: new THREE.Vector3(maxX, maxY, maxZ),
+    isGround
+  });
+}
+
 // Create environment
 function createEnvironment() {
   // Ground
@@ -87,9 +102,8 @@ function createEnvironment() {
   const ground = new THREE.Mesh(groundGeo, groundMaterial);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
-  ground.userData.isGround = true;
   scene.add(ground);
-  platforms.push({ mesh: ground, box: new THREE.Box3().setFromObject(ground) });
+  addCollider(-100, -1, -100, 100, 0, 100, true);
 
   // Central arena platforms
   createPlatform(0, 2, -20, 15, 1, 15);
@@ -136,9 +150,8 @@ function createPlatform(x, y, z, width, height, depth) {
   mesh.position.set(x, y, z);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.userData.isPlatform = true;
   scene.add(mesh);
-  platforms.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
+  addCollider(x - width/2, y - height/2, z - depth/2, x + width/2, y + height/2, z + depth/2);
 }
 
 function createRamp(x, y, z, width, height, depth, angle) {
@@ -148,9 +161,9 @@ function createRamp(x, y, z, width, height, depth, angle) {
   mesh.rotation.x = angle;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.userData.isRamp = true;
   scene.add(mesh);
-  platforms.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
+  // Simplified ramp collider (treat as box for now)
+  addCollider(x - width/2, y, z - depth/2, x + width/2, y + height, z + depth/2);
 }
 
 function createWall(x, y, z, width, height, depth) {
@@ -160,9 +173,8 @@ function createWall(x, y, z, width, height, depth) {
   mesh.position.set(x, y, z);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.userData.isWall = true;
   scene.add(mesh);
-  platforms.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
+  addCollider(x - width/2, y - height/2, z - depth/2, x + width/2, y + height/2, z + depth/2);
 }
 
 function createCover(x, y, z, width, height, depth) {
@@ -172,9 +184,23 @@ function createCover(x, y, z, width, height, depth) {
   mesh.position.set(x, y, z);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.userData.isCover = true;
   scene.add(mesh);
-  platforms.push({ mesh, box: new THREE.Box3().setFromObject(mesh) });
+  addCollider(x - width/2, y - height/2, z - depth/2, x + width/2, y + height/2, z + depth/2);
+}
+
+// Collision detection - check if player cylinder collides with AABB
+function checkCollision(posX, posY, posZ) {
+  const playerMin = new THREE.Vector3(posX - PLAYER_RADIUS, posY, posZ - PLAYER_RADIUS);
+  const playerMax = new THREE.Vector3(posX + PLAYER_RADIUS, posY + PLAYER_HEIGHT, posZ + PLAYER_RADIUS);
+  
+  for (const col of colliders) {
+    if (playerMin.x < col.max.x && playerMax.x > col.min.x &&
+        playerMin.y < col.max.y && playerMax.y > col.min.y &&
+        playerMin.z < col.max.z && playerMax.z > col.min.z) {
+      return col;
+    }
+  }
+  return null;
 }
 
 // Enemy class
@@ -246,21 +272,20 @@ class Enemy {
     this.mesh.position.z += this.velocity.z * delta;
     this.mesh.position.y += this.velocity.y * delta;
 
-    // Ground collision
+    // Ground collision for enemies
     this.isOnGround = false;
-    for (const platform of platforms) {
-      platform.box.setFromObject(platform.mesh);
-      const enemyBox = new THREE.Box3().setFromCenterAndSize(
-        this.mesh.position,
-        new THREE.Vector3(1, 2, 1)
-      );
+    const enemyFeet = this.mesh.position.y - 1;
+    
+    for (const col of colliders) {
+      const inX = this.mesh.position.x > col.min.x && this.mesh.position.x < col.max.x;
+      const inZ = this.mesh.position.z > col.min.z && this.mesh.position.z < col.max.z;
       
-      if (enemyBox.intersectsBox(platform.box)) {
-        // Check if landing on top
-        if (this.velocity.y < 0 && this.mesh.position.y > platform.box.max.y - 0.5) {
-          this.mesh.position.y = platform.box.max.y + 1;
+      if (inX && inZ && enemyFeet <= col.max.y && enemyFeet > col.max.y - 1) {
+        if (this.velocity.y < 0) {
+          this.mesh.position.y = col.max.y + 1;
           this.velocity.y = 0;
           this.isOnGround = true;
+          break;
         }
       }
     }
@@ -444,20 +469,20 @@ function reload() {
   }, RELOAD_TIME);
 }
 
-// Player physics
+// Player physics with proper collision
 function updatePlayer(delta) {
-  const moveDir = new THREE.Vector3();
+  // Update camera rotation from yaw/pitch (prevents roll)
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = yaw;
+  camera.rotation.x = pitch;
+  camera.rotation.z = 0; // Explicitly lock roll
   
-  // Get forward/right vectors from camera
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  forward.y = 0;
-  forward.normalize();
-  
-  const right = new THREE.Vector3();
-  right.crossVectors(forward, new THREE.Vector3(0, 1, 0));
+  // Get forward/right vectors from yaw only (not affected by pitch)
+  const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 
   // Movement input
+  const moveDir = new THREE.Vector3();
   if (keys.w) moveDir.add(forward);
   if (keys.s) moveDir.sub(forward);
   if (keys.d) moveDir.add(right);
@@ -481,41 +506,39 @@ function updatePlayer(delta) {
   // Gravity
   playerVelocity.y -= GRAVITY * delta;
 
-  // Apply velocity
-  camera.position.x += playerVelocity.x * delta;
-  camera.position.z += playerVelocity.z * delta;
-  camera.position.y += playerVelocity.y * delta;
-
-  // Platform collision
-  isOnGround = false;
-  const playerBox = new THREE.Box3().setFromCenterAndSize(
-    camera.position,
-    new THREE.Vector3(1, 2, 1)
-  );
-
-  for (const platform of platforms) {
-    platform.box.setFromObject(platform.mesh);
-    
-    if (playerBox.intersectsBox(platform.box)) {
-      // Check if landing on top
-      if (playerVelocity.y < 0 && camera.position.y > platform.box.max.y) {
-        camera.position.y = platform.box.max.y + 1;
-        playerVelocity.y = 0;
-        isOnGround = true;
-      }
-      // Side collision
-      else if (!platform.mesh.userData.isGround) {
-        const pushDir = new THREE.Vector3().subVectors(camera.position, platform.mesh.position);
-        pushDir.y = 0;
-        pushDir.normalize().multiplyScalar(0.1);
-        camera.position.add(pushDir);
-      }
-    }
+  // Try to move X
+  const newX = camera.position.x + playerVelocity.x * delta;
+  if (!checkCollision(newX, camera.position.y, camera.position.z)) {
+    camera.position.x = newX;
+  } else {
+    playerVelocity.x = 0;
   }
 
-  // Minimum height
-  if (camera.position.y < 2) {
-    camera.position.y = 2;
+  // Try to move Z
+  const newZ = camera.position.z + playerVelocity.z * delta;
+  if (!checkCollision(camera.position.x, camera.position.y, newZ)) {
+    camera.position.z = newZ;
+  } else {
+    playerVelocity.z = 0;
+  }
+
+  // Try to move Y
+  const newY = camera.position.y + playerVelocity.y * delta;
+  const colY = checkCollision(camera.position.x, newY, camera.position.z);
+  if (!colY) {
+    camera.position.y = newY;
+  } else {
+    // Landing on top of something
+    if (playerVelocity.y < 0) {
+      camera.position.y = colY.max.y;
+      isOnGround = true;
+    }
+    playerVelocity.y = 0;
+  }
+
+  // Minimum height (standing on ground)
+  if (camera.position.y < PLAYER_HEIGHT) {
+    camera.position.y = PLAYER_HEIGHT;
     playerVelocity.y = 0;
     isOnGround = true;
   }
@@ -671,8 +694,10 @@ function restartGame() {
   pickups.length = 0;
   
   // Reset player
-  camera.position.set(0, 2, 0);
+  camera.position.set(0, PLAYER_HEIGHT, 0);
   playerVelocity.set(0, 0, 0);
+  yaw = 0;
+  pitch = 0;
   
   updateHealthDisplay();
   updateAmmoDisplay();
@@ -706,9 +731,12 @@ document.addEventListener('keyup', (e) => {
 document.addEventListener('mousemove', (e) => {
   if (!mouse.locked) return;
   
-  camera.rotation.y -= e.movementX * MOUSE_SENSITIVITY;
-  camera.rotation.x -= e.movementY * MOUSE_SENSITIVITY;
-  camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+  // Update yaw and pitch separately - no roll accumulation possible
+  yaw -= e.movementX * MOUSE_SENSITIVITY;
+  pitch -= e.movementY * MOUSE_SENSITIVITY;
+  
+  // Clamp pitch to prevent flipping
+  pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitch));
 });
 
 document.addEventListener('mousedown', (e) => {
