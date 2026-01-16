@@ -359,22 +359,16 @@ class Enemy {
     // Move Y
     this.mesh.position.y += this.velocity.y * delta;
 
-    // Ground collision for enemies
+    // Ground collision for enemies (including ramps)
     this.isOnGround = false;
     const enemyFeet = this.mesh.position.y - 1;
+    const groundHeight = getGroundHeight(this.mesh.position.x, this.mesh.position.z);
     
-    for (const col of colliders) {
-      const inX = this.mesh.position.x > col.min.x && this.mesh.position.x < col.max.x;
-      const inZ = this.mesh.position.z > col.min.z && this.mesh.position.z < col.max.z;
-      
-      if (inX && inZ && enemyFeet <= col.max.y && enemyFeet > col.max.y - 1) {
-        if (this.velocity.y < 0) {
-          this.mesh.position.y = col.max.y + 1;
-          this.velocity.y = 0;
-          this.isOnGround = true;
-          break;
-        }
-      }
+    // Snap to ground/ramp if close enough and falling
+    if (enemyFeet <= groundHeight + 0.3 && this.velocity.y <= 0) {
+      this.mesh.position.y = groundHeight + 1;
+      this.velocity.y = 0;
+      this.isOnGround = true;
     }
 
     // Minimum height
