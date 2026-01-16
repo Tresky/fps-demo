@@ -384,12 +384,65 @@ class Enemy {
       this.isOnGround = true;
     }
 
-    // Attack player if close
+    // Attack player if close AND has line of sight
     if (distance < 2.5 && Date.now() - this.lastAttackTime > 1000) {
-      this.lastAttackTime = Date.now();
-      return true; // Signal attack
+      // Check line of sight before attacking
+      if (this.hasLineOfSight(playerPos)) {
+        this.lastAttackTime = Date.now();
+        return true; // Signal attack
+      }
     }
     return false;
+  }
+
+  // Check if enemy can see the player (no obstacles blocking)
+  hasLineOfSight(playerPos) {
+    const enemyEyePos = this.mesh.position.clone();
+    enemyEyePos.y += 0.5; // Eye level
+    
+    const playerCenter = playerPos.clone();
+    playerCenter.y -= 0.5; // Aim at player body center
+    
+    const direction = new THREE.Vector3().subVectors(playerCenter, enemyEyePos);
+    const distance = direction.length();
+    direction.normalize();
+    
+    // Check against all non-ground colliders
+    for (const col of colliders) {
+      if (col.isGround) continue;
+      
+      // Simple ray-box intersection
+      const hit = this.rayIntersectsBox(enemyEyePos, direction, col.min, col.max, distance);
+      if (hit) {
+        return false; // Blocked by obstacle
+      }
+    }
+    return true; // Clear line of sight
+  }
+
+  // Ray-AABB intersection test
+  rayIntersectsBox(origin, dir, boxMin, boxMax, maxDist) {
+    let tmin = 0;
+    let tmax = maxDist;
+    
+    for (let i = 0; i < 3; i++) {
+      const axis = ['x', 'y', 'z'][i];
+      const invD = 1 / dir[axis];
+      let t0 = (boxMin[axis] - origin[axis]) * invD;
+      let t1 = (boxMax[axis] - origin[axis]) * invD;
+      
+      if (invD < 0) {
+        const temp = t0;
+        t0 = t1;
+        t1 = temp;
+      }
+      
+      tmin = Math.max(tmin, t0);
+      tmax = Math.min(tmax, t1);
+      
+      if (tmax < tmin) return false;
+    }
+    return true;
   }
 
   takeDamage(amount) {
