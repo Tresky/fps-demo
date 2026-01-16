@@ -8,7 +8,7 @@ const MOUSE_SENSITIVITY = 0.002;
 const MAX_HEALTH = 100;
 const MAX_AMMO = 30;
 const MAX_RESERVE = 90;
-const RELOAD_TIME = 2000;
+const RELOAD_TIME = 800; // Faster reload
 const FIRE_RATE = 100;
 const DAMAGE_PER_SHOT = 25;
 const ENEMY_DAMAGE = 10;
@@ -16,6 +16,10 @@ const ENEMY_SPEED = 8;
 const ENEMY_JUMP_FORCE = 10;
 const PLAYER_RADIUS = 0.5;
 const PLAYER_HEIGHT = 1.8;
+const ROCKET_SPEED = 50;
+const ROCKET_DAMAGE = 100;
+const ROCKET_COOLDOWN = 1500;
+const EXPLOSION_RADIUS = 8;
 
 // Game state
 let health = MAX_HEALTH;
@@ -30,7 +34,8 @@ let gameOver = false;
 
 // Input state
 const keys = { w: false, a: false, s: false, d: false, space: false, r: false };
-const mouse = { locked: false };
+const mouse = { locked: false, leftDown: false, rightDown: false };
+let lastRocketTime = 0;
 
 // Camera control - separate yaw and pitch to prevent roll
 let yaw = 0;
@@ -44,6 +49,8 @@ let canDoubleJump = false;
 // Arrays
 const enemies = [];
 const bullets = [];
+const rockets = [];
+const explosions = [];
 const bloodParticles = [];
 const pickups = [];
 const colliders = []; // Simplified collision boxes
@@ -232,6 +239,23 @@ class Enemy {
     this.jumpCooldown = 0;
   }
 
+  checkEnemyCollision(posX, posY, posZ) {
+    const radius = 0.5;
+    const height = 2;
+    const eMin = new THREE.Vector3(posX - radius, posY, posZ - radius);
+    const eMax = new THREE.Vector3(posX + radius, posY + height, posZ + radius);
+    
+    for (const col of colliders) {
+      if (col.isGround) continue; // Skip ground for horizontal collision
+      if (eMin.x < col.max.x && eMax.x > col.min.x &&
+          eMin.y < col.max.y && eMax.y > col.min.y &&
+          eMin.z < col.max.z && eMax.z > col.min.z) {
+        return col;
+      }
+    }
+    return null;
+  }
+
   update(delta, playerPos) {
     if (this.health <= 0) return;
 
@@ -255,10 +279,15 @@ class Enemy {
       this.velocity.z *= 0.8;
     }
 
-    // Jump if player is above or obstacle ahead
+    // Jump if player is above or blocked by obstacle
     this.jumpCooldown -= delta;
     if (this.isOnGround && this.jumpCooldown <= 0) {
-      if (playerPos.y > this.mesh.position.y + 2 || Math.random() < 0.02) {
+      // Check if there's an obstacle ahead
+      const aheadX = this.mesh.position.x + dir.x * 1.5;
+      const aheadZ = this.mesh.position.z + dir.z * 1.5;
+      const blocked = this.checkEnemyCollision(aheadX, this.mesh.position.y - 1, aheadZ);
+      
+      if (playerPos.y > this.mesh.position.y + 2 || blocked || Math.random() < 0.01) {
         this.velocity.y = ENEMY_JUMP_FORCE;
         this.isOnGround = false;
         this.jumpCooldown = 1.5;
@@ -268,9 +297,23 @@ class Enemy {
     // Gravity
     this.velocity.y -= GRAVITY * delta;
 
-    // Apply velocity
-    this.mesh.position.x += this.velocity.x * delta;
-    this.mesh.position.z += this.velocity.z * delta;
+    // Try to move X with collision
+    const newX = this.mesh.position.x + this.velocity.x * delta;
+    if (!this.checkEnemyCollision(newX, this.mesh.position.y - 1, this.mesh.position.z)) {
+      this.mesh.position.x = newX;
+    } else {
+      this.velocity.x = 0;
+    }
+
+    // Try to move Z with collision
+    const newZ = this.mesh.position.z + this.velocity.z * delta;
+    if (!this.checkEnemyCollision(this.mesh.position.x, this.mesh.position.y - 1, newZ)) {
+      this.mesh.position.z = newZ;
+    } else {
+      this.velocity.z = 0;
+    }
+
+    // Move Y
     this.mesh.position.y += this.velocity.y * delta;
 
     // Ground collision for enemies
@@ -468,6 +511,119 @@ function reload() {
     document.getElementById('reload-indicator').style.display = 'none';
     updateAmmoDisplay();
   }, RELOAD_TIME);
+}
+
+// Rocket launcher
+function fireRocket() {
+  if (Date.now() - lastRocketTime < ROCKET_COOLDOWN) return;
+  lastRocketTime = Date.now();
+  
+  // Create rocket mesh
+  const rocketGeo = new THREE.CylinderGeometry(0.1, 0.15, 0.6, 8);
+  rocketGeo.rotateX(Math.PI / 2);
+  const rocketMat = new THREE.MeshStandardMaterial({ color: 0x444444, emissive: 0x331100 });
+  const rocket = new THREE.Mesh(rocketGeo, rocketMat);
+  
+  // Position at camera
+  rocket.position.copy(camera.position);
+  
+  // Get direction camera is facing
+  const direction = new THREE.Vector3();
+  camera.getWorldDirection(direction);
+  rocket.velocity = direction.multiplyScalar(ROCKET_SPEED);
+  rocket.lookAt(rocket.position.clone().add(rocket.velocity));
+  
+  scene.add(rocket);
+  rockets.push(rocket);
+}
+
+// Explosion effect
+function createExplosion(position) {
+  // Visual explosion
+  const explosionGeo = new THREE.SphereGeometry(1, 16, 16);
+  const explosionMat = new THREE.MeshBasicMaterial({ 
+    color: 0xff6600, 
+    transparent: true, 
+    opacity: 0.8 
+  });
+  const explosion = new THREE.Mesh(explosionGeo, explosionMat);
+  explosion.position.copy(position);
+  explosion.scale.set(0.1, 0.1, 0.1);
+  explosion.life = 0.5;
+  scene.add(explosion);
+  explosions.push(explosion);
+  
+  // Damage enemies in radius
+  for (const enemy of enemies) {
+    if (enemy.health <= 0) continue;
+    const dist = enemy.mesh.position.distanceTo(position);
+    if (dist < EXPLOSION_RADIUS) {
+      const damage = ROCKET_DAMAGE * (1 - dist / EXPLOSION_RADIUS);
+      const killed = enemy.takeDamage(damage);
+      createBlood(enemy.mesh.position.clone());
+      
+      if (killed) {
+        score += 100;
+        updateScoreDisplay();
+        if (Math.random() < 0.3) {
+          createPickup(enemy.mesh.position.clone(), Math.random() < 0.5 ? 'health' : 'ammo');
+        }
+        enemy.destroy();
+      }
+    }
+  }
+}
+
+// Update rockets
+function updateRockets(delta) {
+  for (let i = rockets.length - 1; i >= 0; i--) {
+    const rocket = rockets[i];
+    const movement = rocket.velocity.clone().multiplyScalar(delta);
+    rocket.position.add(movement);
+    
+    // Check collision with environment
+    let hitEnvironment = false;
+    for (const col of colliders) {
+      if (rocket.position.x > col.min.x && rocket.position.x < col.max.x &&
+          rocket.position.y > col.min.y && rocket.position.y < col.max.y &&
+          rocket.position.z > col.min.z && rocket.position.z < col.max.z) {
+        hitEnvironment = true;
+        break;
+      }
+    }
+    
+    // Check collision with enemies
+    let hitEnemy = false;
+    for (const enemy of enemies) {
+      if (enemy.health <= 0) continue;
+      if (rocket.position.distanceTo(enemy.mesh.position) < 1.5) {
+        hitEnemy = true;
+        break;
+      }
+    }
+    
+    // Explode on hit or max distance
+    if (hitEnvironment || hitEnemy || rocket.position.distanceTo(camera.position) > 200) {
+      createExplosion(rocket.position.clone());
+      scene.remove(rocket);
+      rockets.splice(i, 1);
+    }
+  }
+}
+
+// Update explosions
+function updateExplosions(delta) {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const exp = explosions[i];
+    exp.life -= delta * 2;
+    exp.scale.multiplyScalar(1.15);
+    exp.material.opacity = exp.life;
+    
+    if (exp.life <= 0) {
+      scene.remove(exp);
+      explosions.splice(i, 1);
+    }
+  }
 }
 
 // Player physics with proper collision
@@ -701,6 +857,16 @@ function restartGame() {
   }
   pickups.length = 0;
   
+  // Clear rockets and explosions
+  for (const rocket of rockets) {
+    scene.remove(rocket);
+  }
+  rockets.length = 0;
+  for (const exp of explosions) {
+    scene.remove(exp);
+  }
+  explosions.length = 0;
+  
   // Reset player
   camera.position.set(0, PLAYER_HEIGHT, 0);
   playerVelocity.set(0, 0, 0);
@@ -750,19 +916,37 @@ document.addEventListener('mousemove', (e) => {
 
 document.addEventListener('mousedown', (e) => {
   if (e.button === 0) {
+    mouse.leftDown = true;
     if (!gameStarted) {
       startGame();
     } else if (gameOver) {
       restartGame();
       document.body.requestPointerLock();
-    } else if (mouse.locked) {
-      shoot();
+    }
+  }
+  if (e.button === 2) {
+    mouse.rightDown = true;
+    if (gameStarted && !gameOver && mouse.locked) {
+      fireRocket();
     }
   }
 });
 
+document.addEventListener('mouseup', (e) => {
+  if (e.button === 0) mouse.leftDown = false;
+  if (e.button === 2) mouse.rightDown = false;
+});
+
+document.addEventListener('contextmenu', (e) => {
+  e.preventDefault(); // Prevent right-click menu
+});
+
 document.addEventListener('pointerlockchange', () => {
   mouse.locked = document.pointerLockElement !== null;
+  if (!mouse.locked) {
+    mouse.leftDown = false;
+    mouse.rightDown = false;
+  }
 });
 
 // Start game
@@ -790,10 +974,17 @@ function animate() {
   const delta = Math.min(clock.getDelta(), 0.1);
   
   if (gameStarted && !gameOver) {
+    // Handle held left click for continuous shooting
+    if (mouse.leftDown && mouse.locked) {
+      shoot();
+    }
+    
     updatePlayer(delta);
     updateEnemies(delta);
     updateBlood(delta);
     updateBullets(delta);
+    updateRockets(delta);
+    updateExplosions(delta);
     updatePickups(delta);
   }
   

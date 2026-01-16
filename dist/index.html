@@ -35,23 +35,35 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 20px;
-      height: 20px;
+      width: 24px;
+      height: 24px;
     }
     #crosshair::before, #crosshair::after {
       content: '';
       position: absolute;
-      background: rgba(255, 255, 255, 0.8);
+      background: #ff4444;
+      box-shadow: 0 0 4px rgba(255, 68, 68, 0.8);
     }
     #crosshair::before {
-      width: 2px;
-      height: 20px;
-      left: 9px;
+      width: 3px;
+      height: 24px;
+      left: 10.5px;
     }
     #crosshair::after {
-      width: 20px;
-      height: 2px;
-      top: 9px;
+      width: 24px;
+      height: 3px;
+      top: 10.5px;
+    }
+    #crosshair-dot {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px;
+      height: 6px;
+      background: #ff4444;
+      border-radius: 50%;
+      box-shadow: 0 0 6px rgba(255, 68, 68, 0.9);
     }
     
     #health-bar {
@@ -179,12 +191,12 @@
       pointer-events: none;
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-Dl31Fx1W.js"></script>
+  <script type="module" crossorigin src="./assets/index-KeyUrwUl.js"></script>
 </head>
 <body>
   <div id="game-container">
     <div id="hud">
-      <div id="crosshair"></div>
+      <div id="crosshair"><div id="crosshair-dot"></div></div>
       <div id="health-text">HEALTH</div>
       <div id="health-bar"><div id="health-fill" style="width: 100%"></div></div>
       <div id="ammo-label">AMMO</div>
@@ -197,9 +209,10 @@
       <div id="start-screen">
         <h1>FPS DEMO</h1>
         <p>WASD - Move</p>
-        <p>SPACE - Jump</p>
+        <p>SPACE - Jump (Double Jump!)</p>
         <p>MOUSE - Look</p>
-        <p>CLICK - Shoot</p>
+        <p>LEFT CLICK - Shoot (Hold to spray)</p>
+        <p>RIGHT CLICK - Rocket Launcher</p>
         <p>R - Reload</p>
         <p class="click-to-start">Click to Start</p>
       </div>
